@@ -15,6 +15,7 @@ include_directories(
 
 add_library(trackplayer SHARED
   JsiBindings.cpp
+  JsiUtils.cpp
   ${REACT_NATIVE_DIR}/jsi/jsi/jsi.cpp
 )
 

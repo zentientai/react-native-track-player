@@ -2,6 +2,8 @@
 #include <jsi/jsi.h>
 #include <android/log.h>
 #include <string>
+#include <functional>
+#include "JsiUtils.h"
 
 using namespace facebook;
 
@@ -11,72 +13,74 @@ using namespace facebook;
 static jsi::Runtime* globalRuntime = nullptr;
 static JavaVM* gJvm = nullptr;
 
-// Forward declaration
-static jobject jsiValueToJava(JNIEnv* env, jsi::Runtime& rt, const jsi::Value& value);
+// Forward declarations
+static JNIEnv* acquireJNIEnv(bool& didAttach);
+static void releaseJNIEnv(bool didAttach);
 
-// Convert JS object to java.util.HashMap
-static jobject jsiObjectToMap(JNIEnv* env, jsi::Runtime& rt, const jsi::Object& obj) {
-    jclass hashMapClass = env->FindClass("java/util/HashMap");
-    jmethodID hashMapCtor = env->GetMethodID(hashMapClass, "<init>", "()V");
-    jmethodID putMethod = env->GetMethodID(hashMapClass, "put",
-                                           "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
-    jobject map = env->NewObject(hashMapClass, hashMapCtor);
-
-    jsi::Array keys = obj.getPropertyNames(rt);
-    for (size_t i = 0; i < keys.size(rt); i++) {
-        std::string key = keys.getValueAtIndex(rt, i).toString(rt).utf8(rt);
-        jsi::Value val = obj.getProperty(rt, key.c_str());
-        jstring jKey = env->NewStringUTF(key.c_str());
-        jobject jVal = jsiValueToJava(env, rt, val);
-        env->CallObjectMethod(map, putMethod, jKey, jVal);
-        env->DeleteLocalRef(jKey);
-        if (jVal) env->DeleteLocalRef(jVal);
+// RAII wrapper for JNI environment management
+class JNIEnvGuard {
+private:
+    JNIEnv* env_;
+    bool didAttach_;
+    
+public:
+    JNIEnvGuard() : env_(nullptr), didAttach_(false) {
+        env_ = acquireJNIEnv(didAttach_);
     }
-    return map;
+    
+    ~JNIEnvGuard() {
+        releaseJNIEnv(didAttach_);
+    }
+    
+    JNIEnv* get() const { return env_; }
+    bool isValid() const { return env_ != nullptr; }
+    
+    // Non-copyable
+    JNIEnvGuard(const JNIEnvGuard&) = delete;
+    JNIEnvGuard& operator=(const JNIEnvGuard&) = delete;
+};
+
+// Utility functions for JNI environment management
+static JNIEnv* acquireJNIEnv(bool& didAttach) {
+    JNIEnv* env = nullptr;
+    didAttach = false;
+    if (gJvm && gJvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (gJvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            didAttach = true;
+        }
+    }
+    return env;
 }
 
-// Convert JS array to java.util.ArrayList
-static jobject jsiArrayToList(JNIEnv* env, jsi::Runtime& rt, const jsi::Array& arr) {
-    jclass arrayListClass = env->FindClass("java/util/ArrayList");
-    jmethodID arrayListCtor = env->GetMethodID(arrayListClass, "<init>", "()V");
-    jmethodID addMethod = env->GetMethodID(arrayListClass, "add", "(Ljava/lang/Object;)Z");
-    jobject list = env->NewObject(arrayListClass, arrayListCtor);
-
-    for (size_t i = 0; i < arr.size(rt); i++) {
-        jobject elem = jsiValueToJava(env, rt, arr.getValueAtIndex(rt, i));
-        env->CallBooleanMethod(list, addMethod, elem);
-        if (elem) env->DeleteLocalRef(elem);
+static void releaseJNIEnv(bool didAttach) {
+    if (didAttach && gJvm) {
+        gJvm->DetachCurrentThread();
     }
-    return list;
 }
 
-// Convert JSI value to appropriate Java object
-static jobject jsiValueToJava(JNIEnv* env, jsi::Runtime& rt, const jsi::Value& value) {
-    if (value.isUndefined() || value.isNull()) return nullptr;
-
-    if (value.isBool()) {
-        jclass booleanClass = env->FindClass("java/lang/Boolean");
-        jmethodID ctor = env->GetMethodID(booleanClass, "<init>", "(Z)V");
-        return env->NewObject(booleanClass, ctor, value.getBool());
-    }
-
-    if (value.isNumber()) {
-        jclass doubleClass = env->FindClass("java/lang/Double");
-        jmethodID ctor = env->GetMethodID(doubleClass, "<init>", "(D)V");
-        return env->NewObject(doubleClass, ctor, value.asNumber());
-    }
-
-    if (value.isString()) {
-        return env->NewStringUTF(value.getString(rt).utf8(rt).c_str());
-    }
-
-    if (value.isObject()) {
-        jsi::Object obj = value.getObject(rt);
-        if (obj.isArray(rt)) return jsiArrayToList(env, rt, obj.asArray(rt));
-        else return jsiObjectToMap(env, rt, obj);
-    }
-
-    return nullptr;
+// Template function for creating host functions with common error handling
+template<typename Callback>
+static jsi::Function createHostFunction(jsi::Runtime& rt, const std::string& name, 
+                                       jobject callbackGlobal, Callback callback) {
+    return jsi::Function::createFromHostFunction(
+        rt, jsi::PropNameID::forAscii(rt, name.c_str()), 1,
+        [callbackGlobal, callback, name](jsi::Runtime& runtime, const jsi::Value&, 
+                                 const jsi::Value* args, size_t count) -> jsi::Value {
+            JNIEnvGuard guard;
+            if (!guard.isValid()) {
+                LOGE("Failed to get JNIEnv in %s", name.c_str());
+                return jsi::Value::undefined();
+            }
+            
+            try {
+                callback(guard.get(), runtime, args, count);
+            } catch (...) {
+                LOGE("Exception in %s handler", name.c_str());
+            }
+            
+            return jsi::Value::undefined();
+        }
+    );
 }
 
 // JNI: call JS function that returns a promise and resolve/reject via callback
@@ -91,12 +95,8 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
     }
 
     jobject callbackGlobal = env->NewGlobalRef(jCallback);
-    const char* cFn = env->GetStringUTFChars(jFnName, nullptr);
-    const char* cInput = env->GetStringUTFChars(jInput, nullptr);
-    std::string fnName(cFn);
-    std::string input(cInput);
-    env->ReleaseStringUTFChars(jFnName, cFn);
-    env->ReleaseStringUTFChars(jInput, cInput);
+    std::string fnName = rntp::extractJNIString(env, jFnName);
+    std::string input = rntp::extractJNIString(env, jInput);
 
     auto rt = globalRuntime;
 
@@ -105,36 +105,18 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
         jsi::Value callVal = rt->global().getProperty(*rt, "__rntpCall");
         if (!callVal.isObject() || !callVal.getObject(*rt).isFunction(*rt)) {
             LOGI("CPP: __rntpCall not found or not a function");
-            JNIEnv* envCb;
-            if (gJvm && gJvm->GetEnv(reinterpret_cast<void**>(&envCb), JNI_VERSION_1_6) == JNI_OK) {
-                jclass cls = envCb->GetObjectClass(callbackGlobal);
-                jmethodID onReject = envCb->GetMethodID(cls, "onReject", "(Ljava/lang/String;)V");
-                jstring jErr = envCb->NewStringUTF("__rntpCall not available");
-                envCb->CallVoidMethod(callbackGlobal, onReject, jErr);
-                envCb->DeleteLocalRef(jErr);
+            JNIEnvGuard guard;
+            if (guard.isValid()) {
+                rntp::handleJSIError(guard.get(), callbackGlobal, "__rntpCall not available");
             }
             env->DeleteGlobalRef(callbackGlobal);
             return;
         }
         jsi::Function callFn = callVal.getObject(*rt).asFunction(*rt);
-        // Build resolve/reject native handlers first
 
-        // Capture callbackGlobal; acquire JNIEnv from JavaVM inside callbacks
-        auto resolveFn = jsi::Function::createFromHostFunction(
-            *rt, jsi::PropNameID::forAscii(*rt, "resolveHandler"), 1,
-            [callbackGlobal](jsi::Runtime& runtime, const jsi::Value&, const jsi::Value* args, size_t count) -> jsi::Value {
-                JNIEnv* envCb = nullptr;
-                bool didAttach = false;
-                if (gJvm && gJvm->GetEnv(reinterpret_cast<void**>(&envCb), JNI_VERSION_1_6) != JNI_OK) {
-                    if (gJvm->AttachCurrentThread(&envCb, nullptr) == JNI_OK) {
-                        didAttach = true;
-                    }
-                }
-                if (!envCb) {
-                    LOGE("CPP: Failed to get JNIEnv in resolve");
-                    return jsi::Value::undefined();
-                }
-
+        // Create resolve handler using template
+        auto resolveFn = createHostFunction(*rt, "resolveHandler", callbackGlobal,
+            [callbackGlobal](JNIEnv* envCb, jsi::Runtime& runtime, const jsi::Value* args, size_t count) {
                 jclass cls = envCb->GetObjectClass(callbackGlobal);
                 jmethodID onResolve = envCb->GetMethodID(cls, "onResolve", "(Ljava/util/Map;)V");
                 jobject argMap = nullptr;
@@ -144,75 +126,44 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
                     if (v.isObject()) {
                         jsi::Object o = v.getObject(runtime);
                         if (!o.isArray(runtime)) {
-                            argMap = jsiObjectToMap(envCb, runtime, o);
+                            argMap = rntp::jsiObjectToMap(envCb, runtime, o);
                         }
                     }
                     if (!argMap) {
                         // Wrap non-object (or arrays) into a map under key "value"
-                        jclass hashMapClass = envCb->FindClass("java/util/HashMap");
-                        jmethodID hashMapCtor = envCb->GetMethodID(hashMapClass, "<init>", "()V");
-                        jmethodID putMethod = envCb->GetMethodID(hashMapClass, "put",
-                            "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
-                        argMap = envCb->NewObject(hashMapClass, hashMapCtor);
-                        jstring jKey = envCb->NewStringUTF("value");
-                        jobject jVal = jsiValueToJava(envCb, runtime, v);
-                        envCb->CallObjectMethod(argMap, putMethod, jKey, jVal);
-                        envCb->DeleteLocalRef(jKey);
-                        if (jVal) envCb->DeleteLocalRef(jVal);
+                        argMap = rntp::wrapValueInMap(envCb, runtime, v);
                     }
                 }
 
                 envCb->CallVoidMethod(callbackGlobal, onResolve, argMap);
                 if (argMap) envCb->DeleteLocalRef(argMap);
-
                 envCb->DeleteGlobalRef(callbackGlobal);
-                if (didAttach && gJvm) {
-                    gJvm->DetachCurrentThread();
-                }
-                return jsi::Value::undefined();
             }
         );
 
-        auto rejectFn = jsi::Function::createFromHostFunction(
-            *rt, jsi::PropNameID::forAscii(*rt, "rejectHandler"), 1,
-            [callbackGlobal](jsi::Runtime& runtime, const jsi::Value&, const jsi::Value* args, size_t count) -> jsi::Value {
-                JNIEnv* envCb = nullptr;
-                bool didAttach = false;
-                if (gJvm && gJvm->GetEnv(reinterpret_cast<void**>(&envCb), JNI_VERSION_1_6) != JNI_OK) {
-                    if (gJvm->AttachCurrentThread(&envCb, nullptr) == JNI_OK) {
-                        didAttach = true;
-                    }
-                }
-                if (!envCb) {
-                    return jsi::Value::undefined();
-                }
-
-                jclass cls = envCb->GetObjectClass(callbackGlobal);
-                jmethodID onReject = envCb->GetMethodID(cls, "onReject", "(Ljava/lang/String;)V");
+        // Create reject handler using template
+        auto rejectFn = createHostFunction(*rt, "rejectHandler", callbackGlobal,
+            [callbackGlobal](JNIEnv* envCb, jsi::Runtime& runtime, const jsi::Value* args, size_t count) {
                 std::string err = count > 0 ? args[0].toString(runtime).utf8(runtime) : "Unknown error";
-                jstring jErr = envCb->NewStringUTF(err.c_str());
-
-                envCb->CallVoidMethod(callbackGlobal, onReject, jErr);
-                envCb->DeleteLocalRef(jErr);
-                envCb->DeleteGlobalRef(callbackGlobal);
-
-                if (didAttach && gJvm) {
-                    gJvm->DetachCurrentThread();
-                }
-                return jsi::Value::undefined();
+                rntp::handleJSIError(envCb, callbackGlobal, err);
             }
         );
 
         // Let JS perform Promise resolution; we just pass handlers
         callFn.call(
             *rt,
-            jsi::String::createFromUtf8(*rt, fnName.c_str()),
-            jsi::String::createFromUtf8(*rt, input),
+            rntp::createJSIString(*rt, fnName),
+            rntp::createJSIString(*rt, input),
             resolveFn,
             rejectFn
         );
     } catch (const std::exception& e) {
         LOGE("CPP: Exception: %s", e.what());
+        JNIEnvGuard guard;
+        if (guard.isValid()) {
+            rntp::handleJSIError(guard.get(), callbackGlobal, e.what());
+        }
+        env->DeleteGlobalRef(callbackGlobal);
     }
 
     // Global ref is deleted in resolve/reject handlers
