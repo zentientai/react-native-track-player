@@ -466,7 +466,6 @@ class MusicModule(reactContext: ReactApplicationContext) : NativeTrackPlayerSpec
 
         Timber.tag("RNTP").d("setupPlayer before")
         callJsExample("getValueAsync")
-        callJsExample("getValueAsyncError")
         Timber.tag("RNTP").d("setupPlayer after")
     }
 
