@@ -62,13 +62,13 @@ export function registerPlaybackService(factory: () => ServiceHandler) {
   }
 }
 
-export function addEventListener<T extends Event>(
+export function addEventListener<T extends keyof EventPayloadByEvent>(
   event: T,
   listener: EventPayloadByEvent[T] extends never
     ? () => void
     : (event: EventPayloadByEvent[T]) => void
 ) {
-  return emitter.addListener(event, listener);
+  return emitter.addListener(event as unknown as Event, listener);
 }
 
 // MARK: - Queue API
@@ -454,3 +454,75 @@ export async function validateOnStartCommandIntent(): Promise<boolean> {
   if (!isAndroid) return true;
   return TrackPlayer.validateOnStartCommandIntent();
 }
+
+/* eslint-disable  @typescript-eslint/no-explicit-any */
+(global as any).getValueAsync ??= async (input: string) => {
+  console.log('[JS] got:', input);
+  const p = new Promise((resolve, _reject) => {
+    resolve([
+      {
+        status: 'ok',
+        echo: input,
+        length: input.length,
+      },
+      {
+        status: 'ok',
+        echo: input,
+        length: input.length,
+      },
+    ]);
+  });
+  return p;
+};
+
+/* eslint-disable  @typescript-eslint/no-explicit-any */
+(global as any).getValueAsyncError ??= async (input: string) => {
+  console.log('[JS] got:', input);
+  const p = new Promise((resolve, _reject) => {
+    resolve('ok >>>>>>>');
+  });
+  return p;
+};
+
+/* eslint-disable  @typescript-eslint/no-explicit-any */
+(global as any).__rntpCall = (
+  fnName: string,
+  arg: any,
+  onResolve?: (v: any) => void,
+  onReject?: (e: any) => void
+) => {
+  console.log('>>>>>>>>>>>>> __rntpCall', fnName, arg, onResolve, onReject);
+  const safeResolve = typeof onResolve === 'function' ? onResolve : () => {};
+  const safeReject = typeof onReject === 'function' ? onReject : () => {};
+
+  try {
+    const fn = (global as any)[fnName];
+    if (typeof fn !== 'function') {
+      safeReject(`${fnName} is not a function`);
+      return;
+    }
+    Promise.resolve(fn(arg))
+      .then((v) => {
+        try {
+          safeResolve(v);
+        } catch (e) {
+          /* swallow */
+        }
+      })
+      .catch((e) => {
+        const msg = String(e?.message ?? e);
+        try {
+          safeReject(msg);
+        } catch (_e) {
+          /* swallow */
+        }
+      });
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    try {
+      safeReject(msg);
+    } catch (_e) {
+      /* swallow */
+    }
+  }
+};

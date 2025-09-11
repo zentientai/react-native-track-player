@@ -10,7 +10,7 @@ import type { EventPayloadByEventWithType } from '../interfaces';
  * @param handler - callback invoked when the event fires
  */
 export const useTrackPlayerEvents = <
-  T extends Event[],
+  T extends ReadonlyArray<keyof EventPayloadByEventWithType>,
   H extends (data: EventPayloadByEventWithType[T[number]]) => void,
 >(
   events: T,

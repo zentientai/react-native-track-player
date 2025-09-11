@@ -112,6 +112,11 @@ export enum Event {
    * See https://rntp.dev/docs/api/events#remoteskip
    **/
   RemoteSkip = 'remote-skip',
+  /**
+   * (Android only) Fired when the user presses the skip button.
+   * See https://rntp.dev/docs/api/events#remoteskip
+   **/
+  RemoteBrowse = 'remote-browse',
   /** (iOS only) Fired when chapter metadata is received.
    * See https://rntp.dev/docs/api/events#chaptermetadatareceived
    **/

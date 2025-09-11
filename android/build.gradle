@@ -33,7 +33,20 @@ android {
   defaultConfig {
     minSdkVersion getExtOrIntegerDefault("minSdkVersion")
     targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
+
+    externalNativeBuild {
+      cmake {
+        cppFlags "-std=c++17"
+      }
+    }
   }
+
+  externalNativeBuild {
+    cmake {
+      path "src/main/cpp/CMakeLists.txt"
+    }
+  }
+
 
   buildFeatures {
     buildConfig true
@@ -43,6 +56,11 @@ android {
     release {
       minifyEnabled false
     }
+  }
+
+  packagingOptions {
+    // Make sure to include jsi .so
+    pickFirst '**/libtrackplayer.so'
   }
 
   lintOptions {
@@ -97,6 +115,7 @@ dependencies {
   implementation "com.google.guava:guava:33.0.0-android"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.8.0"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
 
   implementation 'io.coil-kt:coil:2.4.0'
   api 'com.jakewharton.timber:timber:5.0.1'
