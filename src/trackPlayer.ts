@@ -476,15 +476,6 @@ export async function validateOnStartCommandIntent(): Promise<boolean> {
 };
 
 /* eslint-disable  @typescript-eslint/no-explicit-any */
-(global as any).getValueAsyncError ??= async (input: string) => {
-  console.log('[JS] got:', input);
-  const p = new Promise((resolve, _reject) => {
-    resolve('ok >>>>>>>');
-  });
-  return p;
-};
-
-/* eslint-disable  @typescript-eslint/no-explicit-any */
 (global as any).__rntpNativeCallJs ??= (
   fnName: string,
   arg: any,
