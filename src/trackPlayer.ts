@@ -485,20 +485,19 @@ export async function validateOnStartCommandIntent(): Promise<boolean> {
 };
 
 /* eslint-disable  @typescript-eslint/no-explicit-any */
-(global as any).__rntpCall = (
+(global as any).__rntpNativeCallJs ??= (
   fnName: string,
   arg: any,
   onResolve?: (v: any) => void,
   onReject?: (e: any) => void
 ) => {
-  console.log('>>>>>>>>>>>>> __rntpCall', fnName, arg, onResolve, onReject);
   const safeResolve = typeof onResolve === 'function' ? onResolve : () => {};
   const safeReject = typeof onReject === 'function' ? onReject : () => {};
 
   try {
     const fn = (global as any)[fnName];
     if (typeof fn !== 'function') {
-      safeReject(`${fnName} is not a function`);
+      safeReject(`__rntpNativeCallJs: ${fnName} is not a function`);
       return;
     }
     Promise.resolve(fn(arg))

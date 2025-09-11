@@ -101,13 +101,13 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
     auto rt = globalRuntime;
 
     try {
-        // Use JS helper: global.__rntpCall(fnName, arg, resolve, reject) which handles then/catch in JS
-        jsi::Value callVal = rt->global().getProperty(*rt, "__rntpCall");
+        // Use JS helper: global.__rntpNativeCallJs(fnName, arg, resolve, reject) which handles then/catch in JS
+        jsi::Value callVal = rt->global().getProperty(*rt, "__rntpNativeCallJs");
         if (!callVal.isObject() || !callVal.getObject(*rt).isFunction(*rt)) {
-            LOGI("CPP: __rntpCall not found or not a function");
+            LOGI("CPP: __rntpNativeCallJs not found or not a function");
             JNIEnvGuard guard;
             if (guard.isValid()) {
-                rntp::handleJSIError(guard.get(), callbackGlobal, "__rntpCall not available");
+                rntp::handleJSIError(guard.get(), callbackGlobal, "__rntpNativeCallJs not available");
             }
             env->DeleteGlobalRef(callbackGlobal);
             return;
@@ -115,10 +115,14 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
         jsi::Function callFn = callVal.getObject(*rt).asFunction(*rt);
 
         // Create resolve handler using template
+        // Cache callback method IDs once per callback instance
+        jclass callbackClass = env->GetObjectClass(callbackGlobal);
+        jmethodID onResolveId = env->GetMethodID(callbackClass, "onResolve", "(Ljava/util/Map;)V");
+        jmethodID onRejectId = env->GetMethodID(callbackClass, "onReject", "(Ljava/lang/String;)V");
+        env->DeleteLocalRef(callbackClass);
+
         auto resolveFn = createHostFunction(*rt, "resolveHandler", callbackGlobal,
-            [callbackGlobal](JNIEnv* envCb, jsi::Runtime& runtime, const jsi::Value* args, size_t count) {
-                jclass cls = envCb->GetObjectClass(callbackGlobal);
-                jmethodID onResolve = envCb->GetMethodID(cls, "onResolve", "(Ljava/util/Map;)V");
+            [callbackGlobal, onResolveId](JNIEnv* envCb, jsi::Runtime& runtime, const jsi::Value* args, size_t count) {
                 jobject argMap = nullptr;
 
                 if (count > 0) {
@@ -135,7 +139,7 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
                     }
                 }
 
-                envCb->CallVoidMethod(callbackGlobal, onResolve, argMap);
+                envCb->CallVoidMethod(callbackGlobal, onResolveId, argMap);
                 if (argMap) envCb->DeleteLocalRef(argMap);
                 envCb->DeleteGlobalRef(callbackGlobal);
             }
@@ -143,9 +147,12 @@ Java_com_doublesymmetry_trackplayer_JsiBridge_nativeCallJS(
 
         // Create reject handler using template
         auto rejectFn = createHostFunction(*rt, "rejectHandler", callbackGlobal,
-            [callbackGlobal](JNIEnv* envCb, jsi::Runtime& runtime, const jsi::Value* args, size_t count) {
+            [callbackGlobal, onRejectId](JNIEnv* envCb, jsi::Runtime& runtime, const jsi::Value* args, size_t count) {
                 std::string err = count > 0 ? args[0].toString(runtime).utf8(runtime) : "Unknown error";
-                rntp::handleJSIError(envCb, callbackGlobal, err);
+                jstring jErr = envCb->NewStringUTF(err.c_str());
+                envCb->CallVoidMethod(callbackGlobal, onRejectId, jErr);
+                envCb->DeleteLocalRef(jErr);
+                envCb->DeleteGlobalRef(callbackGlobal);
             }
         );
 
