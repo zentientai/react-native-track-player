@@ -1140,7 +1140,19 @@ class MusicService : HeadlessJsMediaService() {
                   return@future mediaItems.toMutableList()
                 }
 
-                player.load(track.toAudioItem())
+
+                val useCurrent = player.playerState === AudioPlayerState.READY || player.items.isEmpty()
+                val nextIndex = if (useCurrent) {
+                    // if we're ready we haven't played anything yet so insert before
+                    player.currentIndex
+                } else {
+                    // if we're not "ready", we've played, so insert after
+                    player.currentIndex + 1
+                }
+
+                val item = track.toAudioItem()
+                player.add(listOf(item), nextIndex)
+                player.jumpToItem(nextIndex)
                 return@future mediaItems.toMutableList()
             }
         }
