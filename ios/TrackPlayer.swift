@@ -32,6 +32,7 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
     // Background audio properties
     private var backgroundPlayer: AVQueuePlayer?
     private var backgroundLooper: AVPlayerLooper?
+    private var backgroundErrorObserver: NSObjectProtocol?
 
     // MARK: - Lifecycle Methods
 
@@ -104,6 +105,16 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
         self.backgroundPlayer = queuePlayer
         self.backgroundLooper = looper
 
+        self.backgroundErrorObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: templateItem,
+            queue: .main
+        ) { [weak self] notification in
+            let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            print("[RNTP] Background audio error: \(error?.localizedDescription ?? "unknown")")
+            self?.stopBackground()
+        }
+
         // Only start playing if main player is currently playing
         if player.playWhenReady {
             queuePlayer.play()
@@ -111,6 +122,10 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
     }
 
     private func stopBackground() {
+        if let observer = backgroundErrorObserver {
+            NotificationCenter.default.removeObserver(observer)
+            backgroundErrorObserver = nil
+        }
         backgroundLooper?.disableLooping()
         backgroundLooper = nil
         backgroundPlayer?.pause()
@@ -132,6 +147,9 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
         if (rejectWhenNotInitialized(reject: reject)) { return }
         let clampedVolume = min(max(volume, 0.0), 1.0)
         backgroundPlayer?.volume = clampedVolume
+        if let track = player.currentItem as? Track {
+            track.backgroundVolume = clampedVolume
+        }
         resolve(NSNull())
     }
 
@@ -398,7 +416,6 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
         }
 
         player.load(item: track)
-        startBackground(for: track)
         resolve(player.currentIndex)
     }
 
@@ -464,6 +481,7 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
         if (rejectWhenNotInitialized(reject: reject)) { return }
 
         print("Skipping to track:", trackIndex)
+        stopBackground()
         try? player.jumpToItem(atIndex: trackIndex, playWhenReady: player.playerState == .playing)
 
         // if an initialTime is passed the seek to it
@@ -482,6 +500,7 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
     ) {
         if (rejectWhenNotInitialized(reject: reject)) { return }
 
+        stopBackground()
         player.next()
 
         // if an initialTime is passed the seek to it
@@ -500,6 +519,7 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
     ) {
         if (rejectWhenNotInitialized(reject: reject)) { return }
 
+        stopBackground()
         player.previous()
 
         // if an initialTime is passed the seek to it
@@ -541,13 +561,7 @@ public class NativeTrackPlayerImpl: NSObject, AudioSessionControllerDelegate {
     public func setPlayWhenReady(playWhenReady: Bool, resolve: RCTPromiseResolveBlock, reject: RCTPromiseRejectBlock) {
         if (rejectWhenNotInitialized(reject: reject)) { return }
         player.playWhenReady = playWhenReady
-        if let bgPlayer = backgroundPlayer {
-            if playWhenReady {
-                bgPlayer.play()
-            } else {
-                bgPlayer.pause()
-            }
-        }
+        syncBackgroundPlayState()
         resolve(NSNull())
     }
 

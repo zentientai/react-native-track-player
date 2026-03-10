@@ -160,12 +160,6 @@ class MusicService : HeadlessJsMediaService() {
         get() = player.playWhenReady
         set(value) {
             player.playWhenReady = value
-            val bgPlayer = backgroundPlayer ?: return
-            if (value) {
-                bgPlayer.play()
-            } else {
-                bgPlayer.pause()
-            }
         }
 
     private var latestOptions: Bundle? = null
@@ -371,7 +365,6 @@ class MusicService : HeadlessJsMediaService() {
     @MainThread
     fun load(track: Track) {
         player.load(track.toAudioItem())
-        startBackground(track)
     }
 
     @MainThread
@@ -693,6 +686,11 @@ class MusicService : HeadlessJsMediaService() {
         stopBackground()
         val url = track.backgroundUrl ?: return
         val bgPlayer = ExoPlayer.Builder(this).build().apply {
+            val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)
+                .build()
+            setAudioAttributes(audioAttributes, false)
             repeatMode = Player.REPEAT_MODE_ONE
             volume = track.backgroundVolume.coerceIn(0f, 1f)
             addListener(object : Player.Listener {
@@ -791,9 +789,11 @@ class MusicService : HeadlessJsMediaService() {
             AppKilledPlaybackBehavior.PAUSE_PLAYBACK -> {
                 Timber.d("Pausing playback - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
                 player.pause()
+                stopBackground()
             }
             AppKilledPlaybackBehavior.STOP_PLAYBACK_AND_REMOVE_NOTIFICATION -> {
                 Timber.d("Killing service - appKilledPlaybackBehavior = $appKilledPlaybackBehavior")
+                stopBackground()
                 mediaSession.release()
                 player.clear()
                 player.stop()

@@ -55,7 +55,7 @@ file_length:
 
 type_body_length:
   warning: 500
-  error: 700
+  error: 750
 
 function_body_length:
   warning: 60

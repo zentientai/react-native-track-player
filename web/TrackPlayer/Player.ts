@@ -178,7 +178,6 @@ export class Player {
     if (!this.player) throw new SetupNotCalledError();
     await this.player.load(track.url as string);
     this.current = track;
-    this.stopBackground();
     this.startBackground(track);
   }
 
@@ -242,8 +241,12 @@ export class Player {
   }
 
   public setBackgroundVolume(volume: number) {
+    const clamped = Math.min(Math.max(volume, 0), 1);
     if (this.backgroundElement) {
-      this.backgroundElement.volume = Math.min(Math.max(volume, 0), 1);
+      this.backgroundElement.volume = clamped;
+    }
+    if (this._current) {
+      this._current.backgroundVolume = clamped;
     }
   }
 
