@@ -1,0 +1,23 @@
+{
+  "entry": ["src/index.tsx"],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": ["src/**/*.web.ts"],
+  "ignoreDependencies": [
+    "@commitlint/config-conventional",
+    "@evilmartians/lefthook",
+    "@react-native/babel-preset",
+    "@react-native/eslint-config",
+    "shaka-player",
+    "turbo"
+  ],
+  "ignoreWorkspaces": ["example"],
+  "ignoreBinaries": ["swiftlint", "claude"],
+  "rules": {
+    "exports": "off",
+    "types": "off",
+    "enumMembers": "off",
+    "classMembers": "off",
+    "nsExports": "off",
+    "nsTypes": "off"
+  }
+}

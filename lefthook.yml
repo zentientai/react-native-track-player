@@ -1,12 +1,33 @@
 pre-commit:
   parallel: true
   commands:
+    # TypeScript checks
     lint:
       glob: "*.{js,ts,jsx,tsx}"
-      run: npx eslint {staged_files}
+      run: yarn eslint {staged_files}
     types:
-      glob: "*.{js,ts, jsx, tsx}"
-      run: npx tsc
+      glob: "*.{js,ts,jsx,tsx}"
+      run: yarn tsc
+    cpd:
+      run: yarn jscpd src || true
+      skip: [{ref: "merge"}]
+    knip:
+      run: yarn knip || true
+      skip: [{ref: "merge"}]
+
+    # Android/Kotlin checks
+    ktlint:
+      glob: "*.{kt,kts}"
+      run: cd android && ./gradlew ktlintCheck --quiet 2>/dev/null || echo "ktlint issues found"
+    detekt:
+      glob: "*.{kt,kts}"
+      run: cd android && ./gradlew detekt --quiet 2>/dev/null || echo "detekt issues found"
+
+    # iOS/Swift checks
+    swiftlint:
+      glob: "*.swift"
+      run: cd ios && swiftlint lint --quiet
+
 commit-msg:
   parallel: true
   commands:

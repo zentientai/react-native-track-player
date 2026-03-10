@@ -1,0 +1,19 @@
+{
+  "minTokens": 70,
+  "minLines": 10,
+  "threshold": 3,
+  "reporters": ["console"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/lib/**",
+    "**/generated/**",
+    "**/build/**",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "ios/Vendor/**",
+    "docs/**",
+    "example/**"
+  ]
+}
